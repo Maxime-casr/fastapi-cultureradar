@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_KEY = os.getenv("OPENAGENDA_API_KEY")
-AGENDA_SLUG = "ile-de-france"  # à personnaliser si besoin
+AGENDA_SLUG = "ile-de-france"
 
 def fetch_openagenda_events():
     url = f"https://api.openagenda.com/v2/agendas/{AGENDA_SLUG}/events"
@@ -56,11 +56,28 @@ def save_events(events):
             commune = event.get("location", {}).get("city")
             latitude = event.get("location", {}).get("latitude")
             longitude = event.get("location", {}).get("longitude")
-            image_url = event.get("image", {}).get("imageFiles", [{}])[0].get("url")
+
+            image_data = event.get("image", {}).get("imageFiles", [{}])
+            image_url = image_data[0].get("url") if image_data else None
+
             contact_email = event.get("contact", {}).get("email")
             contact_phone = event.get("contact", {}).get("phone")
-            conditions = event.get("conditions")
-            age = event.get("audience", {}).get("minAge")
+
+            # 🔧 Convertir conditions en texte lisible
+            conditions_data = event.get("conditions")
+            if isinstance(conditions_data, dict):
+                conditions = conditions_data.get("fr", "")
+            elif isinstance(conditions_data, str):
+                conditions = conditions_data
+            else:
+                conditions = ""
+
+            # 🔧 Nettoyer l'âge
+            age_data = event.get("audience", {}).get("minAge")
+            if isinstance(age_data, (int, str)):
+                age = str(age_data)
+            else:
+                age = None
 
             date_str = event.get("timings", [{}])[0].get("begin")
             if not date_str:
@@ -84,6 +101,7 @@ def save_events(events):
             )
             db.add(e)
             count += 1
+
         except Exception as err:
             print(f"Erreur sur un événement : {err}")
             continue
