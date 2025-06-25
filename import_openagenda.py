@@ -48,17 +48,26 @@ def save_events(events):
     db: Session = SessionLocal()
     count = 0
 
+    # 🔁 Supprimer les anciens événements
+    db.query(Evenement).delete()
+    db.commit()
+
     for event in events:
         try:
             titre = event.get("title", {}).get("fr", "Sans titre")
-            description = event.get("longDescription", {}).get("fr", "")
+            description = event.get("description", {}).get("fr", "")
             lieu = event.get("location", {}).get("label", {}).get("fr", "inconnu")
             commune = event.get("location", {}).get("city")
             latitude = event.get("location", {}).get("latitude")
             longitude = event.get("location", {}).get("longitude")
 
-            image_data = event.get("image", {}).get("imageFiles", [{}])
-            image_url = image_data[0].get("url") if image_data else None
+            # 📸 Filtrer les événements sans image
+            image_url = None
+            image_info = event.get("image")
+            if image_info and isinstance(image_info, dict):
+                image_files = image_info.get("imageFiles")
+                if image_files and isinstance(image_files, list) and len(image_files) > 0:
+                    image_url = image_files[0].get("url")
 
             contact_email = event.get("contact", {}).get("email")
             contact_phone = event.get("contact", {}).get("phone")
@@ -108,7 +117,8 @@ def save_events(events):
 
     db.commit()
     db.close()
-    print(f"{count} événements ajoutés à la base.")
+    print(f"{count} événements avec image ajoutés à la base.")
+
 
 if __name__ == "__main__":
     events = fetch_openagenda_events()
