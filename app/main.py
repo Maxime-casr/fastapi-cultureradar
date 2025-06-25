@@ -11,8 +11,8 @@ app = FastAPI()
 # Configuration CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ou remplace par ["http://localhost:4200"] en prod
-    allow_credentials=True,
+    allow_origins = ["http://localhost:4200"],
+    allow_credentials = True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
