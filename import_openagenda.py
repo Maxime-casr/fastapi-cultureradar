@@ -61,18 +61,11 @@ def save_events(events):
             latitude = event.get("location", {}).get("latitude")
             longitude = event.get("location", {}).get("longitude")
 
-            # 📸 Filtrer les événements sans image
-            image_url = None
-            image_info = event.get("image")
-            if image_info and isinstance(image_info, dict):
-                image_files = image_info.get("imageFiles")
-                if image_files and isinstance(image_files, list) and len(image_files) > 0:
-                    image_url = image_files[0].get("url")
-
+            image_url = event.get("image", {}).get("filename")
+            
             contact_email = event.get("contact", {}).get("email")
             contact_phone = event.get("contact", {}).get("phone")
 
-            # 🔧 Convertir conditions en texte lisible
             conditions_data = event.get("conditions")
             if isinstance(conditions_data, dict):
                 conditions = conditions_data.get("fr", "")

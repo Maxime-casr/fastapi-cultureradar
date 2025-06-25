@@ -52,3 +52,8 @@ class UtilisateurUpdate(BaseModel):
     theatre: Optional[bool] = None
     cinema: Optional[bool] = None
     expositions: Optional[bool] = None
+
+class LoginRequest(BaseModel):
+    email: str
+    mot_de_passe: str
+
