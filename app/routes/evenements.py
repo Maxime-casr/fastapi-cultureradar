@@ -24,3 +24,16 @@ def create_evenement(evenement: schemas.EvenementCreate, db: Session = Depends(g
 @router.get("/", response_model=list[schemas.EvenementResponse])
 def read_evenements(limit: int = Query(default=10), offset: int = Query(default=0), db: Session = Depends(get_db)):
     return db.query(models.Evenement).offset(offset).limit(limit).all()
+
+@router.get("/search", response_model=list[schemas.EvenementResponse])
+def search_evenements(q: str = "", db: Session = Depends(get_db)):
+    return db.query(models.Evenement).filter(models.Evenement.titre.ilike(f"%{q}%")).all()
+
+@router.get("/{event_id}", response_model=schemas.EvenementResponse)
+def get_evenement_by_id(event_id: int, db: Session = Depends(get_db)):
+    event = db.query(models.Evenement).filter(models.Evenement.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Événement introuvable")
+    return event
+
+
