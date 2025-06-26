@@ -5,6 +5,7 @@ from typing import Optional
 class EvenementBase(BaseModel):
     titre: str
     description: str
+    longdescription: str
     lieu: str
     date: datetime
     prix: float

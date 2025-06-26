@@ -7,6 +7,7 @@ class Evenement(Base):
     id = Column(Integer, primary_key=True, index=True)
     titre = Column(String, nullable=False)
     description = Column(String)
+    longdescription = Column(String)
     lieu = Column(String)
     date = Column(DateTime)
     prix = Column(Float)

@@ -56,6 +56,7 @@ def save_events(events):
         try:
             titre = event.get("title", {}).get("fr", "Sans titre")
             description = event.get("description", {}).get("fr", "")
+            longdescription = event.get("longDescription", {}).get("fr", "")
             lieu = event.get("location", {}).get("label", {}).get("fr", "inconnu")
             commune = event.get("location", {}).get("city")
             latitude = event.get("location", {}).get("latitude")
@@ -89,6 +90,7 @@ def save_events(events):
             e = Evenement(
                 titre=titre,
                 description=description,
+                longdescription = longdescription,
                 lieu=lieu,
                 date=date,
                 prix=0.0,
