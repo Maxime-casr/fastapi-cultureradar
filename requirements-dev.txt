@@ -1,0 +1,6 @@
+-r requirements.txt
+ipykernel
+debugpy
+ipython
+jupyter_client
+jupyter_core
