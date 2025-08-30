@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.routes import ping, evenements, utilisateurs, login,organizer,participations, weather, evenements_context
+from app.routes import ping, evenements, utilisateurs, login,organizer,participations, weather, evenements_context, utils
 from app.database import engine
 from app import models
 
@@ -19,6 +20,7 @@ app.add_middleware(
 
 # Création des tables
 models.Base.metadata.create_all(bind=engine)
+app.mount("/static/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Inclusion des routes
 app.include_router(ping.router)
@@ -29,3 +31,4 @@ app.include_router(organizer.router)
 app.include_router(participations.router)
 app.include_router(weather.router)
 app.include_router(evenements_context.router)
+app.include_router(utils.router)
