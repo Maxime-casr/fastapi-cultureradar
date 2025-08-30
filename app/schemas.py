@@ -49,8 +49,8 @@ class UtilisateurOut(BaseModel):
     is_abonne: bool = False
     premium_since: Optional[datetime] = None
     prefs: Optional[Dict[str, bool]] = None
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 class OccurrenceBase(BaseModel):
     debut: datetime
@@ -66,13 +66,36 @@ class OccurrenceOut(OccurrenceBase):
 
 class RatingSet(BaseModel):
     rating: conint(ge=1, le=5)
+    commentaire: Optional[str] = Field(default=None, max_length=2000)
 
 class RatingMyOut(BaseModel):
     rating: int
+    commentaire: Optional[str] = None
+
+class RatingOut(BaseModel):
+    id: int
+    user_id: int
+    evenement_id: int
+    rating: int
+    commentaire: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 class RatingAverage(BaseModel):
     average: float | None = None
     count: int = 0
+
+
+class RatingPublicOut(BaseModel):
+    id: int
+    user_id: int
+    user_nom: Optional[str] = None   
+    rating: int
+    commentaire: Optional[str] = None
+    created_at: datetime
+
+
 
 class EvenementBase(BaseModel):
     titre: str
@@ -106,8 +129,11 @@ class EvenementCreate(EvenementBase):
 class EvenementResponse(EvenementBase):
     id: int
     owner_id: Optional[int] = None
-    occurrences: List[OccurrenceOut] = []
+    occurrences: list[OccurrenceOut] = Field(default_factory=list)
+    rating_average: Optional[float] = None   # ← calculé côté service
+    rating_count: int = 0                    # ← calculé côté service
     model_config = ConfigDict(from_attributes=True)
+
 
 class ParticipationBase(BaseModel):
     occurrence_id: int
@@ -134,6 +160,5 @@ class ParticipationOut(BaseModel):
 
     evenement_keywords: Optional[List[str]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 

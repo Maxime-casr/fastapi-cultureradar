@@ -1,5 +1,5 @@
 
-from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, ForeignKey, UniqueConstraint,Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -50,7 +50,9 @@ class EventRating(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("utilisateurs.id", ondelete="CASCADE"), index=True, nullable=False)
     evenement_id = Column(Integer, ForeignKey("evenements.id", ondelete="CASCADE"), index=True, nullable=False)
-    rating = Column(Integer, nullable=False)  # 1..5
+    rating = Column(Integer, nullable=False)  
+    commentaire = Column(Text, nullable=True) 
+    
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

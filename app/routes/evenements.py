@@ -116,7 +116,6 @@ def list_evenements(
             )
         )
 
-    # keywords (Postgres JSONB)
     if keyword:
         cond = None
         for k in keyword:
@@ -127,14 +126,12 @@ def list_evenements(
         if cond is not None:
             qs = qs.filter(cond)
 
-    # online/offline
     if online is not None:
         if online:
             qs = qs.filter(models.Evenement.attendance_mode.in_([2, 3]))
         else:
             qs = qs.filter(models.Evenement.attendance_mode == 1)
 
-    # status CSV
     if status_in:
         try:
             codes = [int(x.strip()) for x in status_in.split(",") if x.strip()]
@@ -143,18 +140,15 @@ def list_evenements(
         except ValueError:
             pass
 
-    # âge
     if age_min_lte is not None:
         qs = qs.filter((models.Evenement.age_min == None) | (models.Evenement.age_min <= age_min_lte))
     if age_max_gte is not None:
         qs = qs.filter((models.Evenement.age_max == None) | (models.Evenement.age_max >= age_max_gte))
 
-    # accessibilité (Postgres JSONB)
     if accessible:
         for code in accessible:
             qs = qs.filter(models.Evenement.accessibility[code].astext == 'true')
 
-    # tri
     if order == "date_desc":
         qs = qs.order_by(occ_sub.c.first_debut.desc().nulls_last())
     else:
@@ -162,7 +156,7 @@ def list_evenements(
 
     return qs.offset(offset_val).limit(limit_val).all()
 
-# ---------- HOME (fixe) ----------
+# ---------- HOME 
 @router.get("/home", response_model=List[schemas.EvenementResponse])
 def home_events(limit: int = 20, offset: int = 0, db: Session = Depends(get_db)):
     now = datetime.utcnow()
@@ -335,7 +329,8 @@ def get_my_event_rating(
     )
     if not r:
         raise HTTPException(404, "Pas de note pour cet utilisateur")
-    return schemas.RatingMyOut(rating=r.rating)
+    return schemas.RatingMyOut(rating=r.rating, commentaire=r.commentaire)  # <-- ajouté
+
 
 
 @router.put("/{event_id}/ratings", response_model=schemas.RatingAverage)
@@ -345,12 +340,6 @@ def upsert_my_event_rating(
     db: Session = Depends(get_db),
     me: models.Utilisateur = Depends(get_current_user),
 ):
-    """
-    Règles:
-    - l'utilisateur doit avoir participé (participation 'going')
-    - à une occurrence de cet événement
-    - dont le début est passé (UTC)
-    """
     now = datetime.utcnow()
 
     # 1) Vérifier participation passée
@@ -368,7 +357,7 @@ def upsert_my_event_rating(
     if not part_exists:
         raise HTTPException(403, "Vous ne pouvez noter que des événements passés auxquels vous avez participé.")
 
-    # 2) Upsert de la note
+    # 2) Upsert note + commentaire
     existing = (
         db.query(models.EventRating)
           .filter(models.EventRating.user_id == me.id,
@@ -377,15 +366,18 @@ def upsert_my_event_rating(
     )
     if existing:
         existing.rating = int(payload.rating)
+        existing.commentaire = payload.commentaire  # <-- NOUVEAU
         existing.updated_at = datetime.utcnow()
     else:
         db.add(models.EventRating(
             user_id=me.id,
             evenement_id=event_id,
             rating=int(payload.rating),
+            commentaire=payload.commentaire,  # <-- NOUVEAU
         ))
     db.commit()
 
+    # 3) Recalcul des agrégats
     row = (
         db.query(func.avg(models.EventRating.rating).label("avg"), func.count(models.EventRating.id))
           .filter(models.EventRating.evenement_id == event_id)
@@ -394,4 +386,86 @@ def upsert_my_event_rating(
     avg = float(row[0]) if row[0] is not None else None
     count = int(row[1] or 0)
     return schemas.RatingAverage(average=round(avg, 3) if avg is not None else None, count=count)
+
+@router.get("/{event_id}/ratings", response_model=List[schemas.RatingPublicOut])
+def list_event_reviews(
+    event_id: int,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    include_empty: bool = Query(False, description="Inclure aussi les notes sans commentaire"),
+    db: Session = Depends(get_db),
+):
+    """
+    Retourne les avis (commentaire + note) d'un événement, avec le nom de l'utilisateur.
+    - Par défaut: uniquement les avis ayant un commentaire non vide.
+    - Tri: du plus récent au plus ancien.
+    - Pagination: page/per_page.
+    """
+
+    # Vérifier existence de l'événement (optionnel mais propre)
+    exists = db.query(models.Evenement.id).filter(models.Evenement.id == event_id).first()
+    if not exists:
+        raise HTTPException(404, "Événement introuvable")
+
+    q = (
+        db.query(
+            models.EventRating.id.label("id"),
+            models.EventRating.user_id.label("user_id"),
+            models.Utilisateur.nom.label("user_nom"),
+            models.EventRating.rating.label("rating"),
+            models.EventRating.commentaire.label("commentaire"),
+            models.EventRating.created_at.label("created_at"),
+        )
+        .join(models.Utilisateur, models.Utilisateur.id == models.EventRating.user_id)
+        .filter(models.EventRating.evenement_id == event_id)
+    )
+
+    if not include_empty:
+        # seulement les avis avec un commentaire non nul et non vide
+        q = q.filter(
+            models.EventRating.commentaire.isnot(None),
+            func.length(func.trim(models.EventRating.commentaire)) > 0
+        )
+
+    # Tri du plus récent au plus ancien
+    q = q.order_by(models.EventRating.created_at.desc())
+
+    # Pagination
+    offset = (page - 1) * per_page
+    rows = q.offset(offset).limit(per_page).all()
+
+    # On retourne une liste de dicts prêts pour Pydantic
+    return [
+        {
+            "id": r.id,
+            "user_id": r.user_id,
+            "user_nom": r.user_nom,
+            "rating": r.rating,
+            "commentaire": r.commentaire,
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+
+@router.get("/{event_id}/ratings/counts")
+def count_event_reviews(
+    event_id: int,
+    db: Session = Depends(get_db),
+):
+    total = (
+        db.query(func.count(models.EventRating.id))
+          .filter(models.EventRating.evenement_id == event_id)
+          .scalar()
+    )
+    total_with_comments = (
+        db.query(func.count(models.EventRating.id))
+          .filter(
+              models.EventRating.evenement_id == event_id,
+              models.EventRating.commentaire.isnot(None),
+              func.length(func.trim(models.EventRating.commentaire)) > 0
+          )
+          .scalar()
+    )
+    return {"total": int(total or 0), "total_with_comments": int(total_with_comments or 0)}
+
 
