@@ -340,24 +340,9 @@ def upsert_my_event_rating(
     db: Session = Depends(get_db),
     me: models.Utilisateur = Depends(get_current_user),
 ):
-    now = datetime.utcnow()
+    # ⬅️ plus de vérification "événement passé + participation"
+    # Seule l'authentification est requise.
 
-    # 1) Vérifier participation passée
-    part_exists = (
-        db.query(models.Participation.id)
-          .join(models.Occurrence, models.Occurrence.id == models.Participation.occurrence_id)
-          .filter(
-              models.Participation.user_id == me.id,
-              models.Participation.status == "going",
-              models.Occurrence.evenement_id == event_id,
-              models.Occurrence.debut < now,
-          )
-          .first()
-    )
-    if not part_exists:
-        raise HTTPException(403, "Vous ne pouvez noter que des événements passés auxquels vous avez participé.")
-
-    # 2) Upsert note + commentaire
     existing = (
         db.query(models.EventRating)
           .filter(models.EventRating.user_id == me.id,
@@ -366,26 +351,27 @@ def upsert_my_event_rating(
     )
     if existing:
         existing.rating = int(payload.rating)
-        existing.commentaire = payload.commentaire  # <-- NOUVEAU
+        existing.commentaire = payload.commentaire
         existing.updated_at = datetime.utcnow()
     else:
         db.add(models.EventRating(
             user_id=me.id,
             evenement_id=event_id,
             rating=int(payload.rating),
-            commentaire=payload.commentaire,  # <-- NOUVEAU
+            commentaire=payload.commentaire,
         ))
     db.commit()
 
-    # 3) Recalcul des agrégats
     row = (
-        db.query(func.avg(models.EventRating.rating).label("avg"), func.count(models.EventRating.id))
+        db.query(func.avg(models.EventRating.rating).label("avg"),
+                 func.count(models.EventRating.id))
           .filter(models.EventRating.evenement_id == event_id)
           .one()
     )
     avg = float(row[0]) if row[0] is not None else None
     count = int(row[1] or 0)
     return schemas.RatingAverage(average=round(avg, 3) if avg is not None else None, count=count)
+
 
 @router.get("/{event_id}/ratings", response_model=List[schemas.RatingPublicOut])
 def list_event_reviews(
