@@ -16,18 +16,27 @@ def get_db():
         db.close()
 
 @router.get("/events", response_model=list[schemas.EvenementResponse])
-def list_my_events(db: Session = Depends(get_db),
-                   me: models.Utilisateur = Depends(require_organizer)):
-    from sqlalchemy import func
-    sub = (db.query(models.Occurrence.evenement_id,
-                    func.min(models.Occurrence.debut).label("first_debut"))
-             .group_by(models.Occurrence.evenement_id)
-             .subquery())
-    return (db.query(models.Evenement)
-              .join(sub, sub.c.evenement_id == models.Evenement.id)
-              .filter(models.Evenement.owner_id == me.id)
-              .order_by(sub.c.first_debut.asc())
-              .all())
+def list_my_events(
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(require_organizer),
+):
+    sub = (
+        db.query(
+            models.Occurrence.evenement_id,
+            func.min(models.Occurrence.debut).label("first_debut"),
+        )
+        .group_by(models.Occurrence.evenement_id)
+        .subquery()
+    )
+
+    return (
+        db.query(models.Evenement)
+          .join(sub, sub.c.evenement_id == models.Evenement.id)
+          .filter(models.Evenement.owner_id == me.id)
+          .order_by(sub.c.first_debut.asc().nulls_last())
+          .all()
+    )
+
 
 @router.post("/events", response_model=schemas.EvenementResponse, status_code=201)
 def create_event(body: schemas.EvenementCreate,
