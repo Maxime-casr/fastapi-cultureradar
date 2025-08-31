@@ -6,6 +6,7 @@ from dateutil.parser import parse
 from dotenv import load_dotenv
 from app.database import SessionLocal
 from app.models import Evenement, Occurrence
+import unicodedata
 
 load_dotenv()
 API_KEY = os.getenv("OPENAGENDA_API_KEY")
@@ -40,6 +41,11 @@ def fetch_openagenda_events():
         events.extend(page); offset += limit
         if len(page) < limit or len(events) >= MAX_EVENTS: break
     return events
+
+def norm_kw(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s or "")
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.strip().lower()
 
 def upsert_events(events):
     db: Session = SessionLocal()
@@ -84,7 +90,8 @@ def upsert_events(events):
             attendance_mode = ev.get("attendanceMode")
             status = ev.get("status")
             accessibility = ev.get("accessibility") or None
-            keywords = _as_fr_list_keywords(ev.get("keywords"))
+            keywords_raw = _as_fr_list_keywords(ev.get("keywords"))
+            keywords = [norm_kw(k) for k in (keywords_raw or []) if k] or None
 
             if not db_ev:
                 # --- créer (ADD ONLY) ---
