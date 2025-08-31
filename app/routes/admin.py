@@ -198,12 +198,13 @@ def admin_content_quality(
     # image manquante (on compte aussi les vides)
     missing_img = (
         db.query(func.count(models.Evenement.id))
-          .filter(or_(
-              models.Evenement.image_url.is_(None),
-              func.length(func.trim(models.Evenement.image_url)) == 0
-          ))
-          .scalar() or 0
+        .filter(or_(
+            models.Evenement.image_url.is_(None),
+            func.length(func.trim(models.Evenement.image_url)) == 0
+        ))
+        .scalar() or 0
     )
+
 
     # géoloc manquante
     missing_geo = (
@@ -215,14 +216,18 @@ def admin_content_quality(
           .scalar() or 0
     )
 
-    # ✅ keywords manquants (JSONB)
     missing_kw = (
         db.query(func.count(models.Evenement.id))
-          .filter(or_(
-              models.Evenement.keywords.is_(None),
-              func.coalesce(func.jsonb_array_length(models.Evenement.keywords), 0) == 0
-          ))
-          .scalar() or 0
+        .filter(or_(
+            models.Evenement.keywords.is_(None),
+            # si c'est un array -> on teste sa longueur, sinon on considère 0
+            case(
+                (func.jsonb_typeof(models.Evenement.keywords) == 'array',
+                func.jsonb_array_length(models.Evenement.keywords)),
+                else_=0
+            ) == 0
+        ))
+        .scalar() or 0
     )
 
     # événements sans occurrence
