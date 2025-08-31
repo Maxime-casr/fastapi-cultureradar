@@ -1,18 +1,27 @@
 # app/routes/cron.py
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 import os
-
 from app.auth import get_db
+from app.import_openagenda import fetch_openagenda_events, upsert_events
 from app.tasks.daily_digest import run as run_digest
 
 router = APIRouter(prefix="/cron", tags=["Cron"])
+CRON_SECRET = os.getenv("CRON_SECRET")
 
-CRON_SECRET = os.getenv("CRON_SECRET")  # mets une valeur forte dans tes env vars
-
-@router.post("/daily-digest")
-def daily_digest(x_cron_key: str | None = Header(default=None), db: Session = Depends(get_db)):
+@router.post("/nightly")
+def nightly(x_cron_key: str | None = Header(default=None),
+            db: Session = Depends(get_db)):
     if not CRON_SECRET or x_cron_key != CRON_SECRET:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    # 1) sync OA
+    events = fetch_openagenda_events()
+    sync_res = upsert_events(events)
+
+    # 2) mails jour J (Europe/Paris)
     app_public = os.getenv("APP_PUBLIC_URL", "http://localhost:4200")
-    return run_digest(db, app_public)
+    digest_res = run_digest(db, app_public)
+
+    return {"sync": sync_res, "digest": digest_res}
+

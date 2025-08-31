@@ -9,6 +9,9 @@ from datetime import datetime
 class Evenement(Base):
     __tablename__ = "evenements"
 
+    external_uid = Column(String, unique=True, index=True, nullable=True)  # OA uid
+    source = Column(String(32), nullable=True) 
+
     id = Column(Integer, primary_key=True, index=True)
     titre = Column(String, nullable=False)
     description = Column(String)
