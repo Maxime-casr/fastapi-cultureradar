@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 import os
 from app.auth import get_db
-from app.import_openagenda import fetch_openagenda_events, upsert_events
+from import_openagenda import fetch_openagenda_events, upsert_events
 from app.tasks.daily_digest import run as run_digest
 
 router = APIRouter(prefix="/cron", tags=["Cron"])
