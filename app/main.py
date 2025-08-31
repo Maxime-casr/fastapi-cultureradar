@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-from app.routes import ping, evenements, utilisateurs, login,organizer,participations, weather, evenements_context, utils, admin
+from app.routes import ping, evenements, utilisateurs, login,organizer,participations, weather, evenements_context, utils, admin, cron
 from app.database import engine
 from app import models
 
@@ -35,6 +35,7 @@ app.include_router(weather.router)
 app.include_router(evenements_context.router)
 app.include_router(utils.router)
 app.include_router(admin.router)
+app.include_router(cron.router)
 
 app.include_router(login.verify_router)  # ⬅️ AJOUTER CECI
 
