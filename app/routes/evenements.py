@@ -170,7 +170,6 @@ def list_evenements(
         qs = qs.filter((models.Evenement.age_max == None) | (models.Evenement.age_max >= age_max_gte))
 
     # distance (si lat/lon)
-    # distance (si lat/lon)
     if lat is not None and lon is not None:
         radius = float(radius_km or 50.0)  # défaut 50 km
 
@@ -203,6 +202,7 @@ def list_evenements(
         distance_km = 2.0 * R * func.asin(func.sqrt(a_clamped))
 
         qs = qs.filter(distance_km <= radius)
+
 
     # tri
     qs = qs.order_by(occ_sub.c.first_debut.desc().nulls_last() if order == "date_desc"

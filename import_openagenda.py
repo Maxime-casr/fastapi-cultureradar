@@ -2,6 +2,8 @@
 import os, requests
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from dateutil.parser import parse
 from dotenv import load_dotenv
 from app.database import SessionLocal
@@ -128,26 +130,33 @@ def upsert_events(events):
                 if longitude is not None: db_ev.longitude = longitude
 
             # 3) occurrences : on ajoute celles qui n’existent pas (grâce à l’unique constraint)
+            # app/import_openagenda.py
+            
+
+            # ...
             for t in (ev.get("timings") or []):
                 begin = t.get("begin")
-                if not begin: continue
+                if not begin:
+                    continue
                 end = t.get("end")
-                occ = Occurrence(
+
+                stmt = pg_insert(Occurrence).values(
                     evenement_id=db_ev.id,
                     debut=parse(begin),
                     fin=parse(end) if end else None,
                     all_day=bool(t.get("allDay") or False),
+                ).on_conflict_do_nothing(
+                    constraint="uq_occurrence_event_time"  # nom de ta contrainte unique
                 )
-                try:
-                    db.add(occ)
-                    db.flush()
-                    touched_occ += 1
-                except IntegrityError:
-                    db.rollback()  # occurrence déjà là -> ignore
+
+                res = db.execute(stmt)
+                touched_occ += (res.rowcount or 0)
+
 
         except Exception as e:
             db.rollback()
             print("Erreur import:", e)
+
 
     db.commit(); db.close()
     print(f"✅ Import OA terminé : {added} nouveaux événements, {touched_occ} occurrences ajoutées.")
