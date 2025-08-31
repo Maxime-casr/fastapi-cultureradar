@@ -194,18 +194,41 @@ def admin_content_quality(
     me: models.Utilisateur = Depends(require_admin),
 ):
     total = db.query(func.count(models.Evenement.id)).scalar() or 0
-    missing_img = db.query(func.count(models.Evenement.id)).filter(models.Evenement.image_url.is_(None)).scalar() or 0
-    missing_geo = db.query(func.count(models.Evenement.id)).filter(
-        or_(models.Evenement.latitude.is_(None), models.Evenement.longitude.is_(None))
-    ).scalar() or 0
-    missing_kw = db.query(func.count(models.Evenement.id)).filter(
-        or_(models.Evenement.keywords.is_(None), func.cardinality(models.Evenement.keywords) == 0)
-    ).scalar() or 0
-    # événement sans occurrence
-    occ_counts = (
-        db.query(func.count(models.Occurrence.id)).scalar() or 0
+
+    # image manquante (on compte aussi les vides)
+    missing_img = (
+        db.query(func.count(models.Evenement.id))
+          .filter(or_(
+              models.Evenement.image_url.is_(None),
+              func.length(func.trim(models.Evenement.image_url)) == 0
+          ))
+          .scalar() or 0
     )
-    missing_occ = total - (db.query(func.count(func.distinct(models.Occurrence.evenement_id))).scalar() or 0)
+
+    # géoloc manquante
+    missing_geo = (
+        db.query(func.count(models.Evenement.id))
+          .filter(or_(
+              models.Evenement.latitude.is_(None),
+              models.Evenement.longitude.is_(None)
+          ))
+          .scalar() or 0
+    )
+
+    # ✅ keywords manquants (JSONB)
+    missing_kw = (
+        db.query(func.count(models.Evenement.id))
+          .filter(or_(
+              models.Evenement.keywords.is_(None),
+              func.coalesce(func.jsonb_array_length(models.Evenement.keywords), 0) == 0
+          ))
+          .scalar() or 0
+    )
+
+    # événements sans occurrence
+    missing_occ = total - (
+        db.query(func.count(func.distinct(models.Occurrence.evenement_id))).scalar() or 0
+    )
 
     return schemas.AdminContentQuality(
         total_events=total,
