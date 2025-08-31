@@ -2,6 +2,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, ForeignKey, UniqueConstraint,Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from app.database import Base
 from datetime import datetime
 
@@ -103,6 +104,7 @@ class Utilisateur(Base):
     id = Column(Integer, primary_key=True, index=True)
     nom = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
+    is_email_verified = Column(Boolean, nullable=False, default=False)
     mot_de_passe = Column(String, nullable=False)
 
     # --- nouveaux champs profil ---
@@ -118,6 +120,16 @@ class Utilisateur(Base):
     premium_since = Column(DateTime)
 
     events = relationship("Evenement", back_populates="owner")
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verif_tokens"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("utilisateurs.id"), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, unique=True)  # SHA-256 hex
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("Utilisateur")
 
 class Participation(Base):
     __tablename__ = "participations"

@@ -2,13 +2,17 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import get_current_user, hash_password
+from app.utils.email import send_email
+from app.utils.verification import make_verif_token, verification_email_html
 from app.database import SessionLocal
 from app import models, schemas
+
+APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://localhost:4200")
 
 router = APIRouter(prefix="/utilisateurs", tags=["Utilisateurs"])
 
@@ -20,7 +24,9 @@ def get_db():
         db.close()
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=schemas.UtilisateurOut)
-def create_user(body: schemas.UtilisateurCreate, db: Session = Depends(get_db)):
+def create_user(body: schemas.UtilisateurCreate,
+                background: BackgroundTasks,     # ⬅️ ajouté
+                db: Session = Depends(get_db)):
     if db.query(models.Utilisateur).filter(models.Utilisateur.email == body.email).first():
         raise HTTPException(status_code=409, detail="Email déjà utilisé")
 
@@ -28,20 +34,23 @@ def create_user(body: schemas.UtilisateurCreate, db: Session = Depends(get_db)):
         nom=body.nom,
         email=body.email,
         mot_de_passe=hash_password(body.mot_de_passe),
-
-        # NOUVEAU : champs profil (optionnels)
         age=body.age,
         preferred_slot=body.preferred_slot,
         available_days=body.available_days,
         mobility=body.mobility,
-        # created_at est auto (default=utcnow)
     )
-
     try:
         db.add(user); db.commit(); db.refresh(user)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Email déjà utilisé")
+
+    # ⬇️ envoyer l’e-mail de vérification ici
+    token = make_verif_token(db, user)
+    link = f"{APP_PUBLIC_URL}/verify-email?token={token}"
+    html = verification_email_html(link, user.nom or user.email)
+    background.add_task(send_email, user.email, "Vérifie ton e-mail", html)
+
     return user
 
 @router.get("/me", response_model=schemas.UtilisateurOut)
