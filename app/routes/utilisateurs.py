@@ -1,6 +1,7 @@
 # app/routes/utilisateurs.py
 from __future__ import annotations
 from datetime import datetime, timezone
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
