@@ -170,11 +170,13 @@ def list_evenements(
         qs = qs.filter((models.Evenement.age_max == None) | (models.Evenement.age_max >= age_max_gte))
 
     # distance (si lat/lon)
+    # distance (si lat/lon)
     if lat is not None and lon is not None:
-        R = 6371.0
-        radius = radius_km or 50.0  # défaut 50 km
+        radius = float(radius_km or 50.0)  # défaut 50 km
+
+        # BBOX rapide (côté Python)
         delta_lat = radius / 111.0
-        denom = func.greatest(0.00001, func.cos(func.radians(literal(lat))) * 111.0)
+        denom = max(0.00001, math.cos(math.radians(lat)) * 111.0)
         delta_lon = radius / denom
 
         qs = qs.filter(
@@ -184,14 +186,22 @@ def list_evenements(
             models.Evenement.longitude.between(lon - delta_lon, lon + delta_lon),
         )
 
-        lat1 = func.radians(literal(lat)); lon1 = func.radians(literal(lon))
+        # Haversine précis (côté SQL) pour couper tout ce qui est hors rayon
+        R = 6371.0
+        lat1 = math.radians(lat)
+        lon1 = math.radians(lon)
         lat2 = func.radians(cast(models.Evenement.latitude, Float))
         lon2 = func.radians(cast(models.Evenement.longitude, Float))
-        dlat, dlon = lat2 - lat1, lon2 - lon1
-        a = (func.power(func.sin(dlat/2.0), 2) +
-             func.cos(lat1)*func.cos(lat2)*func.power(func.sin(dlon/2.0), 2))
+
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+
+        # clamp numérique et distance
+        a = (func.pow(func.sin(dlat/2.0), 2) +
+            math.cos(lat1) * func.cos(lat2) * func.pow(func.sin(dlon/2.0), 2))
         a_clamped = func.least(literal(1.0), func.greatest(literal(0.0), a))
         distance_km = 2.0 * R * func.asin(func.sqrt(a_clamped))
+
         qs = qs.filter(distance_km <= radius)
 
     # tri
