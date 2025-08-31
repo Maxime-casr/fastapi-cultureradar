@@ -162,3 +162,53 @@ class ParticipationOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+# --- Admin DTOs ---
+class AdminOverview(BaseModel):
+    users_total: int
+    users_new_7d: int
+    organizers: int
+    admins: int
+    premium_active: int
+
+    events_total: int
+    events_upcoming: int
+    events_past: int
+    events_with_image_pct: float
+    events_with_geo_pct: float
+
+    participations_total: int
+    participations_7d: int
+
+    rating_avg_global: Optional[float] = None
+    ratings_count: int
+
+class AdminTimePoint(BaseModel):
+    date: str
+    count: int
+
+class AdminTimeSeries(BaseModel):
+    users: List[AdminTimePoint]
+    events: List[AdminTimePoint]
+    participations: List[AdminTimePoint]
+    ratings: List[AdminTimePoint]
+
+class AdminTopEventItem(BaseModel):
+    id: int
+    titre: str
+    commune: Optional[str] = None
+    image_url: Optional[str] = None
+    metric: float | int
+
+class AdminTopEvents(BaseModel):
+    most_participated: List[AdminTopEventItem]
+    best_rated: List[AdminTopEventItem]
+
+class AdminContentQuality(BaseModel):
+    total_events: int
+    missing_image: int
+    missing_geo: int
+    missing_keywords: int
+    missing_occurrences: int
+
+
