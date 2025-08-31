@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, desc, and_
+from sqlalchemy import func, case, desc, and_, or_
 
 from app.database import SessionLocal
 from app import models, schemas
@@ -97,21 +97,42 @@ def admin_time_series(
     now = datetime.utcnow()
     since = now - timedelta(days=days)
 
-    def daily_counts(model, date_col):
-        # PostgreSQL: date_trunc
-        rows = (db.query(func.date_trunc('day', date_col).label('d'), func.count('*').label('c'))
-                  .filter(date_col >= since)
-                  .group_by(func.date_trunc('day', date_col))
-                  .order_by('d').all())
+    def daily_counts(query_col):
+        rows = (
+            db.query(func.date_trunc('day', query_col).label('d'),
+                     func.count('*').label('c'))
+              .filter(query_col >= since)
+              .group_by(func.date_trunc('day', query_col))
+              .order_by('d')
+              .all()
+        )
         return [{"date": r.d.date().isoformat(), "count": int(r.c)} for r in rows]
 
-    users = daily_counts(models.Utilisateur, models.Utilisateur.created_at)
-    events = daily_counts(models.Evenement, func.coalesce(models.Evenement.id, 0) * 0 + func.now())  # fallback si pas de colonne date
-    # si tu ajoutes created_at aux événements, remplace la ligne ci-dessus par models.Evenement.created_at
-    parts = daily_counts(models.Participation, models.Participation.created_at)
-    ratings = daily_counts(models.EventRating, models.EventRating.created_at)
+    # Inscrits / Participations / Notes
+    users  = daily_counts(models.Utilisateur.created_at)
+    parts  = daily_counts(models.Participation.created_at)
+    ratings = daily_counts(models.EventRating.created_at)
 
-    return schemas.AdminTimeSeries(users=users, events=events, participations=parts, ratings=ratings)
+    # Événements : created_at si dispo, sinon approximation via les occurrences (min: leur présence par jour)
+    if hasattr(models.Evenement, "created_at"):
+        events = daily_counts(models.Evenement.created_at)
+    else:
+        rows = (
+            db.query(
+                func.date_trunc('day', models.Occurrence.debut).label('d'),
+                func.count(func.distinct(models.Occurrence.evenement_id)).label('c')
+            )
+            .filter(models.Occurrence.debut >= since)
+            .group_by(func.date_trunc('day', models.Occurrence.debut))
+            .order_by('d')
+            .all()
+        )
+        events = [{"date": r.d.date().isoformat(), "count": int(r.c)} for r in rows]
+
+    return schemas.AdminTimeSeries(
+        users=users, events=events, participations=parts, ratings=ratings
+    )
+
 
 @router.get("/top/events", response_model=schemas.AdminTopEvents)
 def admin_top_events(
