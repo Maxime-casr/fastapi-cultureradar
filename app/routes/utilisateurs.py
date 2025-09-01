@@ -24,6 +24,11 @@ def get_db():
     finally:
         db.close()
 
+@router.get("/me", response_model=schemas.UtilisateurOut)
+def get_me(current_user: models.Utilisateur = Depends(get_current_user)):
+    return current_user
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=schemas.UtilisateurOut)
 def create_user(body: schemas.UtilisateurCreate,
                 background: BackgroundTasks,     # ⬅️ ajouté
@@ -114,7 +119,7 @@ def unsubscribe(current_user: models.Utilisateur = Depends(get_current_user),
     db.add(current_user); db.commit(); db.refresh(current_user)
     return {"ok": True, "is_abonne": False, "premium_since": None}
 
-@router.post("/utilisateurs/{id}/promote", response_model=schemas.UtilisateurOut)
+@router.post("/{id}/promote", response_model=schemas.UtilisateurOut)
 def promote_user(id: int,
                  db: Session = Depends(get_db),
                  current_user: models.Utilisateur = Depends(get_current_user)):
