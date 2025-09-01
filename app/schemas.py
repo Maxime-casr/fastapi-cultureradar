@@ -19,6 +19,15 @@ class UtilisateurCreate(BaseModel):
     available_days: Optional[List[DayCode]] = None
     mobility: Optional[TravelMode] = None
 
+class UtilisateurUpdate(BaseModel):
+    nom: Optional[str] = None
+    age: Optional[int] = None
+    preferred_slot: Optional[PreferredSlot] = None
+    available_days: Optional[List[DayCode]] = None
+    mobility: Optional[TravelMode] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 class LoginRequest(BaseModel):
     email: EmailStr
     mot_de_passe: str

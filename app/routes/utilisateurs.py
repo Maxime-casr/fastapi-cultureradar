@@ -54,9 +54,38 @@ def create_user(body: schemas.UtilisateurCreate,
 
     return user
 
-@router.get("/me", response_model=schemas.UtilisateurOut)
-def get_me(current_user: models.Utilisateur = Depends(get_current_user)):
+@router.put("/me", response_model=schemas.UtilisateurOut)
+def update_me(
+    body: schemas.UtilisateurUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.Utilisateur = Depends(get_current_user),
+):
+    # on ne met à jour que les champs fournis (exclude_unset)
+    data = body.model_dump(exclude_unset=True)
+
+    # petite normalisation/validation légère
+    if "nom" in data and data["nom"] is not None:
+        data["nom"] = (data["nom"] or "").strip()
+        if not data["nom"]:
+            raise HTTPException(status_code=422, detail="Le nom ne peut pas être vide.")
+
+    if "age" in data and data["age"] is not None:
+        try:
+            data["age"] = int(data["age"])
+            if data["age"] < 0 or data["age"] > 120:
+                raise ValueError()
+        except Exception:
+            raise HTTPException(status_code=422, detail="Âge invalide.")
+
+    # mise à jour sélective
+    for k, v in data.items():
+        setattr(current_user, k, v)
+
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
     return current_user
+
 
 @router.get("/me/subscription")
 def get_subscription_status(current_user: models.Utilisateur = Depends(get_current_user)):

@@ -14,6 +14,18 @@ from app.auth import get_current_user  # nécessaire pour /reco
 
 router = APIRouter(prefix="/evenements", tags=["Evenements"])
 
+def rating_stats_cte(db: Session):
+    return (
+        db.query(
+            models.EventRating.evenement_id.label("ev_id"),
+            func.avg(models.EventRating.rating).label("avg"),
+            func.count(models.EventRating.id).label("cnt"),
+        )
+        .group_by(models.EventRating.evenement_id)
+        .cte("rating_stats")
+    )
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -204,11 +216,25 @@ def list_evenements(
         qs = qs.filter(distance_km <= radius)
 
 
-    # tri
-    qs = qs.order_by(occ_sub.c.first_debut.desc().nulls_last() if order == "date_desc"
+        # tri
+        qs = qs.order_by(occ_sub.c.first_debut.desc().nulls_last() if order == "date_desc"
                      else occ_sub.c.first_debut.asc().nulls_last())
+        
+        stats = rating_stats_cte(db)
+        qs = qs.outerjoin(stats, stats.c.ev_id == models.Evenement.id)
 
-    return qs.offset(offset_val).limit(limit_val).all()
+        rows = qs.add_columns(stats.c.avg, stats.c.cnt) \
+                .offset(offset_val).limit(limit_val).all()
+
+        out = []
+        for ev, avg, cnt in rows:
+            # on « annote » l’instance ORM pour que Pydantic la lise
+            ev.rating_average = float(avg) if avg is not None else None
+            ev.rating_count = int(cnt or 0)
+            out.append(ev)
+        return out
+
+
 
 # ---------- HOME 
 @router.get("/home", response_model=List[schemas.EvenementResponse])
@@ -220,14 +246,23 @@ def home_events(limit: int = 20, offset: int = 0, db: Session = Depends(get_db))
         .group_by(models.Occurrence.evenement_id)
         .subquery()
     )
-    return (
-        db.query(models.Evenement)
-          .join(next_occ, next_occ.c.evenement_id == models.Evenement.id)
-          .options(joinedload(models.Evenement.occurrences))
-          .order_by(next_occ.c.next_debut.asc())
-          .offset(offset).limit(limit)
-          .all()
+    stats = rating_stats_cte(db)
+
+    rows = (
+        db.query(models.Evenement, next_occ.c.next_debut, stats.c.avg, stats.c.cnt)
+        .join(next_occ, next_occ.c.evenement_id == models.Evenement.id)
+        .outerjoin(stats, stats.c.ev_id == models.Evenement.id)
+        .options(joinedload(models.Evenement.occurrences))
+        .order_by(next_occ.c.next_debut.asc())
+        .offset(offset).limit(limit)
+        .all()
     )
+    out = []
+    for ev, _, avg, cnt in rows:
+        ev.rating_average = float(avg) if avg is not None else None
+        ev.rating_count = int(cnt or 0)
+        out.append(ev)
+    return out
 
 @router.get("/reco", response_model=List[schemas.EvenementResponse])
 def recommended_events(
@@ -391,13 +426,20 @@ def recommended_events(
     )
 
     rows = (
-        qs.options(joinedload(models.Evenement.occurrences))
-          .order_by(desc(total_score), asc(next_occ.c.next_debut))
-          .offset(offset).limit(limit)
-          .all()
+        qs.add_columns(rating_cte.c.avg, rating_cte.c.cnt)  # 👈 ajoute ces colonnes
+        .options(joinedload(models.Evenement.occurrences))
+        .order_by(desc(total_score), asc(next_occ.c.next_debut))
+        .offset(offset).limit(limit)
+        .all()
     )
-    # rows = [(Evenement, next_debut), ...] -> ne retourner que Evenement
-    return [r[0] for r in rows]
+
+    out = []
+    for ev, _, avg, cnt in rows:
+        ev.rating_average = float(avg) if avg is not None else None
+        ev.rating_count = int(cnt or 0)
+        out.append(ev)
+    return out
+
 
 # ---------- PAR ID (paramétrique) ----------
 @router.get("/{event_id}", response_model=schemas.EvenementResponse)
