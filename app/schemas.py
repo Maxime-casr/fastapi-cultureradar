@@ -144,7 +144,7 @@ class EvenementResponse(EvenementBase):
 
     promoted_until: Optional[datetime] = None
     is_promoted: bool = False
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -223,5 +223,22 @@ class AdminContentQuality(BaseModel):
     missing_geo: int
     missing_keywords: int
     missing_occurrences: int
+
+class AdminUserRow(BaseModel):
+    id: int
+    nom: Optional[str] = None
+    email: EmailStr
+    role: str
+    is_abonne: bool
+    created_at: datetime
+
+class AdminEventRow(BaseModel):
+    id: int
+    titre: str
+    commune: Optional[str] = None
+    image_url: Optional[str] = None
+    owner_id: Optional[int] = None
+    created_at: datetime
+    upcoming: int = 0
 
 

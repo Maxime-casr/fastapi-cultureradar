@@ -242,3 +242,109 @@ def admin_content_quality(
         missing_keywords=missing_kw,
         missing_occurrences=missing_occ,
     )
+
+
+def _assert_admin(me: models.Utilisateur):
+    if getattr(me, "role", "user") != "admin":
+        raise HTTPException(403, "Accès réservé à l’admin")
+
+@router.get("/users", response_model=List[schemas.AdminUserRow])
+def list_users(
+    q: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(get_current_user),
+):
+    _assert_admin(me)
+    qs = db.query(models.Utilisateur)
+    if q:
+        like = f"%{q}%"
+        qs = qs.filter(or_(
+            models.Utilisateur.email.ilike(like),
+            models.Utilisateur.nom.ilike(like),
+            models.Utilisateur.role.ilike(like),
+        ))
+    rows = (qs.order_by(models.Utilisateur.created_at.desc())
+              .offset((page-1)*per_page).limit(per_page).all())
+    return rows
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(get_current_user),
+):
+    _assert_admin(me)
+    user = db.query(models.Utilisateur).get(user_id)
+    if not user:
+        raise HTTPException(404, "Utilisateur introuvable")
+
+    # Détacher la propriété des événements pour éviter la contrainte FK
+    db.query(models.Evenement).filter(models.Evenement.owner_id == user_id)\
+      .update({models.Evenement.owner_id: None})
+    db.delete(user)
+    db.commit()
+    return {"ok": True}
+
+@router.get("/events", response_model=List[schemas.AdminEventRow])
+def list_events(
+    q: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(get_current_user),
+):
+    _assert_admin(me)
+    now = datetime.utcnow()
+    # Compte des occurrences à venir par événement
+    upcoming_cte = (
+        db.query(
+            models.Occurrence.evenement_id.label("ev_id"),
+            func.count(models.Occurrence.id).label("upcoming")
+        )
+        .filter(models.Occurrence.debut >= now)
+        .group_by(models.Occurrence.evenement_id)
+        .cte("upcoming_cte")
+    )
+
+    qs = (db.query(models.Evenement, func.coalesce(upcoming_cte.c.upcoming, 0))
+            .outerjoin(upcoming_cte, upcoming_cte.c.ev_id == models.Evenement.id))
+
+    if q:
+        like = f"%{q}%"
+        qs = qs.filter(or_(
+            models.Evenement.titre.ilike(like),
+            models.Evenement.commune.ilike(like),
+            models.Evenement.lieu.ilike(like),
+        ))
+
+    rows = (qs.order_by(models.Evenement.id.desc())
+              .offset((page-1)*per_page).limit(per_page).all())
+
+    out = []
+    for ev, upcoming in rows:
+        out.append({
+            "id": ev.id,
+            "titre": ev.titre,
+            "commune": ev.commune,
+            "image_url": ev.image_url,
+            "owner_id": ev.owner_id,
+            "created_at": getattr(ev, "created_at", datetime.utcnow()),
+            "upcoming": int(upcoming or 0),
+        })
+    return out
+
+@router.delete("/events/{event_id}")
+def delete_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(get_current_user),
+):
+    _assert_admin(me)
+    ev = db.query(models.Evenement).get(event_id)
+    if not ev:
+        raise HTTPException(404, "Événement introuvable")
+    db.delete(ev)  # Occurrences/ratings/participations ont ondelete('CASCADE') ou cascade ORM
+    db.commit()
+    return {"ok": True}
