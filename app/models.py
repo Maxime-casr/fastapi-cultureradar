@@ -39,6 +39,9 @@ class Evenement(Base):
     latitude = Column(Float)
     longitude = Column(Float)
 
+    promoted_until = Column(DateTime, nullable=True)    
+    promoted_plan  = Column(String(32), nullable=True) 
+
     owner_id = Column(Integer, ForeignKey("utilisateurs.id"), nullable=True)
     owner = relationship("Utilisateur", back_populates="events")
 

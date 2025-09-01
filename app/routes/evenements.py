@@ -1,6 +1,6 @@
 # app/routes/evenements.py
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
@@ -51,38 +51,26 @@ def create_evenement(evenement: schemas.EvenementCreate, db: Session = Depends(g
 
 @router.get("", response_model=List[schemas.EvenementResponse])
 def list_evenements(
-    # texte / ville / dates
     q: Optional[str] = Query(None),
     city: Optional[str] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
-
-    # heures locales Europe/Paris (sur l'heure de début)
     hour_from: Optional[int] = Query(None, ge=0, le=23),
     hour_to:   Optional[int] = Query(None, ge=0, le=23),
-
-    # filtre géo (rayon en km)
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
     radius_km: Optional[float] = Query(None, ge=0.1),
-
-    # keywords avancés
     kw_any:  Optional[List[str]] = Query(None, description="au moins un"),
     kw_all:  Optional[List[str]] = Query(None, description="tous"),
     kw_none: Optional[List[str]] = Query(None, description="aucun"),
-
-    # tranche d’âge
     age_min_lte: Optional[int] = Query(None),
     age_max_gte: Optional[int] = Query(None),
-
-    # tri / pagination
     future_only: bool = Query(True),
     order: str = Query("date_asc"),
     page: Optional[int] = Query(None, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     limit: Optional[int] = Query(None, ge=1, le=100),
     offset: Optional[int] = Query(None, ge=0),
-
     db: Session = Depends(get_db),
 ):
     now = datetime.utcnow()
@@ -137,7 +125,7 @@ def list_evenements(
             getattr(models.Evenement, "adresse", models.Evenement.lieu).ilike(like)
         )
 
-    # ville (filtre textuel simple)
+    # ville
     if city:
         like_city = f"%{city}%"
         qs = qs.filter(
@@ -155,13 +143,11 @@ def list_evenements(
         s = "".join(c for c in s if not unicodedata.combining(c))
         return s.strip().lower()
 
-    # kw_all: doit contenir tous
     if kw_all:
         kws = [_norm_kw(x) for x in kw_all if x]
         if kws:
             qs = qs.filter(models.Evenement.keywords.contains(kws))
 
-    # kw_any: au moins un
     if kw_any:
         cond = None
         for k in ([_norm_kw(x) for x in kw_any if x] or []):
@@ -170,12 +156,11 @@ def list_evenements(
         if cond is not None:
             qs = qs.filter(cond)
 
-    # kw_none: exclure
     if kw_none:
         for k in ([_norm_kw(x) for x in kw_none if x] or []):
             qs = qs.filter(~models.Evenement.keywords.contains([k]))
 
-    # âge
+    # tranche d’âge
     if age_min_lte is not None:
         qs = qs.filter((models.Evenement.age_min == None) | (models.Evenement.age_min <= age_min_lte))
     if age_max_gte is not None:
@@ -183,9 +168,7 @@ def list_evenements(
 
     # distance (si lat/lon)
     if lat is not None and lon is not None:
-        radius = float(radius_km or 50.0)  # défaut 50 km
-
-        # BBOX rapide (côté Python)
+        radius = float(radius_km or 50.0)
         delta_lat = radius / 111.0
         denom = max(0.00001, math.cos(math.radians(lat)) * 111.0)
         delta_lon = radius / denom
@@ -197,42 +180,43 @@ def list_evenements(
             models.Evenement.longitude.between(lon - delta_lon, lon + delta_lon),
         )
 
-        # Haversine précis (côté SQL) pour couper tout ce qui est hors rayon
         R = 6371.0
         lat1 = math.radians(lat)
         lon1 = math.radians(lon)
         lat2 = func.radians(cast(models.Evenement.latitude, Float))
         lon2 = func.radians(cast(models.Evenement.longitude, Float))
-
         dlat = lat2 - lat1
         dlon = lon2 - lon1
-
-        # clamp numérique et distance
         a = (func.pow(func.sin(dlat/2.0), 2) +
-            math.cos(lat1) * func.cos(lat2) * func.pow(func.sin(dlon/2.0), 2))
+             math.cos(lat1) * func.cos(lat2) * func.pow(func.sin(dlon/2.0), 2))
         a_clamped = func.least(literal(1.0), func.greatest(literal(0.0), a))
         distance_km = 2.0 * R * func.asin(func.sqrt(a_clamped))
-
         qs = qs.filter(distance_km <= radius)
 
+    # ----- TRI: promus d'abord, puis date -----
+    promo_flag = case(
+        (and_(models.Evenement.promoted_until.isnot(None),
+              models.Evenement.promoted_until >= now), 1),
+        else_=0
+    )
+    date_order = occ_sub.c.first_debut.desc().nulls_last() if order == "date_desc" \
+                 else occ_sub.c.first_debut.asc().nulls_last()
 
-        # tri
-        qs = qs.order_by(occ_sub.c.first_debut.desc().nulls_last() if order == "date_desc"
-                     else occ_sub.c.first_debut.asc().nulls_last())
-        
-        stats = rating_stats_cte(db)
-        qs = qs.outerjoin(stats, stats.c.ev_id == models.Evenement.id)
+    # notes
+    stats = rating_stats_cte(db)
+    qs = qs.outerjoin(stats, stats.c.ev_id == models.Evenement.id) \
+           .order_by(desc(promo_flag), date_order)
 
-        rows = qs.add_columns(stats.c.avg, stats.c.cnt) \
-                .offset(offset_val).limit(limit_val).all()
+    rows = qs.add_columns(stats.c.avg, stats.c.cnt) \
+             .offset(offset_val).limit(limit_val).all()
 
-        out = []
-        for ev, avg, cnt in rows:
-            # on « annote » l’instance ORM pour que Pydantic la lise
-            ev.rating_average = float(avg) if avg is not None else None
-            ev.rating_count = int(cnt or 0)
-            out.append(ev)
-        return out
+    out = []
+    for ev, avg, cnt in rows:
+        ev.rating_average = float(avg) if avg is not None else None
+        ev.rating_count = int(cnt or 0)
+        ev.is_promoted = bool(getattr(ev, "promoted_until", None) and ev.promoted_until >= now)
+        out.append(ev)
+    return out
 
 
 
@@ -248,21 +232,29 @@ def home_events(limit: int = 20, offset: int = 0, db: Session = Depends(get_db))
     )
     stats = rating_stats_cte(db)
 
+    promo_flag = case(
+        (and_(models.Evenement.promoted_until.isnot(None),
+              models.Evenement.promoted_until >= now), 1),
+        else_=0
+    )
+
     rows = (
-        db.query(models.Evenement, next_occ.c.next_debut, stats.c.avg, stats.c.cnt)
-        .join(next_occ, next_occ.c.evenement_id == models.Evenement.id)
-        .outerjoin(stats, stats.c.ev_id == models.Evenement.id)
-        .options(joinedload(models.Evenement.occurrences))
-        .order_by(next_occ.c.next_debut.asc())
-        .offset(offset).limit(limit)
-        .all()
+        db.query(models.Evenement, next_occ.c.next_debut, stats.c.avg, stats.c.cnt, promo_flag.label("pf"))
+          .join(next_occ, next_occ.c.evenement_id == models.Evenement.id)
+          .outerjoin(stats, stats.c.ev_id == models.Evenement.id)
+          .options(joinedload(models.Evenement.occurrences))
+          .order_by(desc(promo_flag), next_occ.c.next_debut.asc())
+          .offset(offset).limit(limit)
+          .all()
     )
     out = []
-    for ev, _, avg, cnt in rows:
+    for ev, _, avg, cnt, _pf in rows:
         ev.rating_average = float(avg) if avg is not None else None
         ev.rating_count = int(cnt or 0)
+        ev.is_promoted = bool(getattr(ev, "promoted_until", None) and ev.promoted_until >= now)
         out.append(ev)
     return out
+
 
 @router.get("/reco", response_model=List[schemas.EvenementResponse])
 def recommended_events(
@@ -273,7 +265,6 @@ def recommended_events(
 ):
     now = datetime.utcnow()
 
-    # 1) prefs mots-clés (TOP N)
     top_prefs = (
         db.query(models.UserKeywordPref)
           .filter(models.UserKeywordPref.user_id == me.id)
@@ -282,18 +273,15 @@ def recommended_events(
           .limit(20)
           .all()
     )
-
-    # normaliser les poids pour éviter l’explosion
     total_weight = sum((p.score or 1) for p in top_prefs) or 1
     score_expr = literal(0, type_=Float)
     for pref in top_prefs:
-        w = (pref.score or 1) / total_weight  # normalisation
+        w = (pref.score or 1) / total_weight
         score_expr = score_expr + case(
             (models.Evenement.keywords.contains([pref.keyword]), w),
             else_=0.0
         )
 
-    # 2) prochaine occurrence
     next_occ = (
         db.query(models.Occurrence.evenement_id,
                  func.min(models.Occurrence.debut).label("next_debut"))
@@ -307,7 +295,6 @@ def recommended_events(
           .join(next_occ, next_occ.c.evenement_id == models.Evenement.id)
     )
 
-    # 3) exclure events déjà "going"
     going_ev_ids = (
         db.query(models.Occurrence.evenement_id)
           .join(models.Participation, models.Participation.occurrence_id == models.Occurrence.id)
@@ -317,18 +304,14 @@ def recommended_events(
     )
     qs = qs.filter(~models.Evenement.id.in_(going_ev_ids))
 
-    # 4) âge user vs age_min/max
     if getattr(me, "age", None) is not None:
         qs = qs.filter(
             or_(models.Evenement.age_min == None, models.Evenement.age_min <= me.age),
             or_(models.Evenement.age_max == None, models.Evenement.age_max >= me.age),
         )
 
-    # 5) créneau & jour en Europe/Paris
-    # next_debut est un "timestamp without tz" UTC -> converti vers Europe/Paris
-    # (ts AT TIME ZONE 'UTC') AT TIME ZONE 'Europe/Paris' renvoie un timestamp local sans tz
     local_ts = func.timezone('Europe/Paris', func.timezone('UTC', next_occ.c.next_debut))
-    dow_expr = func.extract("dow", local_ts)   # 0=dimanche ... 6=samedi
+    dow_expr = func.extract("dow", local_ts)
     hr_expr  = func.extract("hour", local_ts)
 
     day_bonus = literal(0.0)
@@ -343,13 +326,11 @@ def recommended_events(
         if slot == "morning":      cond = and_(hr_expr >= 6,  hr_expr <= 11)
         elif slot == "afternoon":  cond = and_(hr_expr >= 12, hr_expr <= 17)
         elif slot == "evening":    cond = and_(hr_expr >= 18, hr_expr <= 22)
-        else:                      cond = or_(hr_expr >= 23, hr_expr < 6)  # night
+        else:                      cond = or_(hr_expr >= 23, hr_expr < 6)
         slot_bonus = case((cond, 1.0), else_=0.0)
 
-    # 6) distance score (bbox + haversine)
     distance_km_expr = literal(None, type_=Float)
     distance_score   = literal(0.0)
-
     ctx = (
         db.query(models.UserContext)
           .filter(models.UserContext.user_id == me.id)
@@ -359,7 +340,6 @@ def recommended_events(
         radius_by_mode = {"walk": 2.0, "bike": 8.0, "car": 40.0}
         radius = radius_by_mode.get(me.mobility, 40.0)
 
-        # bbox rapide
         delta_lat = radius / 111.0
         denom = max(0.00001, math.cos(math.radians(ctx.home_lat)) * 111.0)
         delta_lon = radius / denom
@@ -371,32 +351,23 @@ def recommended_events(
             models.Evenement.longitude.between(ctx.home_lon - delta_lon, ctx.home_lon + delta_lon),
         )
 
-        # haversine (Postgres a sin/cos/acos/radians)
-        # 2*R*asin(sqrt(a)), mais on peut approx avec acos; restons haversine robuste:
         lat1 = func.radians(literal(ctx.home_lat))
         lon1 = func.radians(literal(ctx.home_lon))
         lat2 = func.radians(cast(models.Evenement.latitude, Float))
         lon2 = func.radians(cast(models.Evenement.longitude, Float))
-
         dlat = lat2 - lat1
         dlon = lon2 - lon1
         a = (func.power(func.sin(dlat/2.0), 2) +
              func.cos(lat1) * func.cos(lat2) * func.power(func.sin(dlon/2.0), 2))
-        # clamp numérique
         a_clamped = func.least(literal(1.0), func.greatest(literal(0.0), a))
         earth_km = 6371.0
         distance_km_expr = 2.0 * earth_km * func.asin(func.sqrt(a_clamped))
-
-        # score [0..1] = max(0, 1 - d/radius)
         distance_score = func.greatest(0.0, 1.0 - (distance_km_expr / radius))
 
-    # 7) time decay (plus c’est proche, mieux c’est)
-    # days_to = (next_debut - now)/86400 ; decay = exp(-lambda * days), lambda ~ 0.15 (≈ demi-vie ~ 4.6 j)
-    seconds_to = (func.extract('epoch', next_occ.c.next_debut) - func.extract('epoch', literal(now)))  # en s
+    seconds_to = (func.extract('epoch', next_occ.c.next_debut) - func.extract('epoch', literal(now)))
     days_to = seconds_to / 86400.0
-    decay = func.exp(-0.15 * func.greatest(0.0, days_to))  # [~0..1]
+    decay = func.exp(-0.15 * func.greatest(0.0, days_to))
 
-    # 8) ratings (moyenne + volume, façon "shrinkage")
     rating_cte = (
         db.query(
             models.EventRating.evenement_id.label("ev_id"),
@@ -408,14 +379,19 @@ def recommended_events(
     )
     qs = qs.outerjoin(rating_cte, rating_cte.c.ev_id == models.Evenement.id)
 
-    # score_rating = (cnt/(cnt+10)) * (avg/5)
     score_rating = (
         (func.coalesce(rating_cte.c.cnt, 0.0) / (func.coalesce(rating_cte.c.cnt, 0.0) + 10.0))
         * (func.coalesce(rating_cte.c.avg, 0.0) / 5.0)
     )
 
-    # 9) score global (poids à ajuster)
-    W_PREF, W_DAY, W_SLOT, W_DIST, W_TIME, W_RATE = 3.0, 1.5, 1.5, 2.0, 2.0, 1.5
+    # Bonus “promu”
+    promo_flag = case(
+        (and_(models.Evenement.promoted_until.isnot(None),
+              models.Evenement.promoted_until >= now), 1.0),
+        else_=0.0
+    )
+
+    W_PREF, W_DAY, W_SLOT, W_DIST, W_TIME, W_RATE, W_PROMO = 3.0, 1.5, 1.5, 2.0, 2.0, 1.5, 3.0
     total_score = (
         (score_expr * W_PREF)
         + (day_bonus * W_DAY)
@@ -423,22 +399,25 @@ def recommended_events(
         + (distance_score * W_DIST)
         + (decay * W_TIME)
         + (score_rating * W_RATE)
+        + (promo_flag * W_PROMO)       # 👈 prend la priorité
     )
 
     rows = (
-        qs.add_columns(rating_cte.c.avg, rating_cte.c.cnt)  # 👈 ajoute ces colonnes
-        .options(joinedload(models.Evenement.occurrences))
-        .order_by(desc(total_score), asc(next_occ.c.next_debut))
-        .offset(offset).limit(limit)
-        .all()
+        qs.add_columns(rating_cte.c.avg, rating_cte.c.cnt)
+          .options(joinedload(models.Evenement.occurrences))
+          .order_by(desc(total_score), asc(next_occ.c.next_debut))
+          .offset(offset).limit(limit)
+          .all()
     )
 
     out = []
     for ev, _, avg, cnt in rows:
         ev.rating_average = float(avg) if avg is not None else None
         ev.rating_count = int(cnt or 0)
+        ev.is_promoted = bool(getattr(ev, "promoted_until", None) and ev.promoted_until >= now)
         out.append(ev)
     return out
+
 
 
 # ---------- PAR ID (paramétrique) ----------
@@ -604,5 +583,37 @@ def count_event_reviews(
           .scalar()
     )
     return {"total": int(total or 0), "total_with_comments": int(total_with_comments or 0)}
+
+
+@router.post("/{event_id}/promote/boost30")
+def promote_boost30(
+    event_id: int,
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(get_current_user),
+):
+    ev = (
+        db.query(models.Evenement)
+          .filter(models.Evenement.id == event_id)
+          .first()
+    )
+    if not ev:
+        raise HTTPException(404, "Événement introuvable")
+
+    # autorisations: owner ou admin
+    if me.role != "admin" and ev.owner_id != me.id:
+        raise HTTPException(403, "Accès refusé")
+
+    # Activer l’offre: 7 jours de boost, plan 'BOOST30'
+    ev.promoted_until = datetime.utcnow() + timedelta(days=7)
+    ev.promoted_plan = "BOOST30"
+    db.add(ev); db.commit(); db.refresh(ev)
+
+    # Pour confort front: renvoyer un flag
+    return {
+        "ok": True,
+        "event_id": ev.id,
+        "plan": ev.promoted_plan,
+        "promoted_until": ev.promoted_until,
+    }
 
 

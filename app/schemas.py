@@ -141,6 +141,10 @@ class EvenementResponse(EvenementBase):
     occurrences: list[OccurrenceOut] = Field(default_factory=list)
     rating_average: Optional[float] = None   # ← calculé côté service
     rating_count: int = 0                    # ← calculé côté service
+
+    promoted_until: Optional[datetime] = None
+    is_promoted: bool = False
+    
     model_config = ConfigDict(from_attributes=True)
 
 
