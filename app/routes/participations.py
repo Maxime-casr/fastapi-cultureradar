@@ -1,5 +1,5 @@
 # app/routes/participations.py
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -59,7 +59,11 @@ def _increment_first_time_keywords(db: Session, user_id: int, event: models.Even
         else:
             pref = models.UserKeywordPref(user_id=user_id, keyword=k, score=1)
             db.add(pref)
-    
+
+def _is_premium_active(u: models.Utilisateur) -> bool:
+    if not getattr(u, "is_abonne", False) or getattr(u, "premium_since", None) is None:
+        return False
+    return datetime.now(timezone.utc) < (u.premium_since + timedelta(days=30))
 
 @router.get("", response_model=List[schemas.ParticipationOut])
 def list_mine(
@@ -67,6 +71,8 @@ def list_mine(
     db: Session = Depends(get_db),
     me: models.Utilisateur = Depends(get_current_user),
 ):
+    if not _is_premium_active(me):
+        raise HTTPException(status_code=403, detail="subscription_required")
     now = datetime.utcnow()
     q = (
         db.query(models.Participation)
@@ -151,3 +157,6 @@ def cancel_participation(
         raise HTTPException(404, "Participation introuvable")
     p.status = "cancelled"
     db.add(p); db.commit()
+
+
+

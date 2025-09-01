@@ -1,6 +1,6 @@
 # app/routes/utilisateurs.py
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -91,34 +91,6 @@ def update_me(
     db.refresh(current_user)
     return current_user
 
-
-@router.get("/me/subscription")
-def get_subscription_status(current_user: models.Utilisateur = Depends(get_current_user)):
-    return {
-        "is_abonne": bool(getattr(current_user, "is_abonne", False)),
-        "premium_since": getattr(current_user, "premium_since", None),
-    }
-
-@router.post("/me/subscribe")
-def subscribe(current_user: models.Utilisateur = Depends(get_current_user),
-              db: Session = Depends(get_db)):
-    if getattr(current_user, "is_abonne", False):
-        return {"ok": True, "is_abonne": True, "premium_since": current_user.premium_since}
-    current_user.is_abonne = True
-    current_user.premium_since = datetime.now(timezone.utc)
-    db.add(current_user); db.commit(); db.refresh(current_user)
-    return {"ok": True, "is_abonne": True, "premium_since": current_user.premium_since}
-
-@router.post("/me/unsubscribe")
-def unsubscribe(current_user: models.Utilisateur = Depends(get_current_user),
-                db: Session = Depends(get_db)):
-    if not getattr(current_user, "is_abonne", False):
-        return {"ok": True, "is_abonne": False, "premium_since": None}
-    current_user.is_abonne = False
-    current_user.premium_since = None
-    db.add(current_user); db.commit(); db.refresh(current_user)
-    return {"ok": True, "is_abonne": False, "premium_since": None}
-
 @router.post("/{id}/promote", response_model=schemas.UtilisateurOut)
 def promote_user(id: int,
                  db: Session = Depends(get_db),
@@ -131,6 +103,47 @@ def promote_user(id: int,
     user.role = "organizer"
     db.add(user); db.commit(); db.refresh(user)
     return user
+
+def _subscription_info(u: models.Utilisateur) -> tuple[bool, datetime|None]:
+    """Actif si is_abonne=True ET premium_since < 30 j."""
+    since = getattr(u, "premium_since", None)
+    if not getattr(u, "is_abonne", False) or since is None:
+        return False, None
+    expires = since + timedelta(days=30)
+    return (datetime.now(timezone.utc) < expires), expires
+
+@router.get("/me/subscription")
+def get_subscription_status(current_user: models.Utilisateur = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    active, expires_at = _subscription_info(current_user)
+    # (optionnel) auto-expirer en base
+    if current_user.is_abonne and not active:
+        current_user.is_abonne = False
+        db.add(current_user); db.commit(); db.refresh(current_user)
+    return {
+        "is_active": active,
+        "is_abonne": bool(current_user.is_abonne),
+        "premium_since": current_user.premium_since,
+        "expires_at": expires_at,
+    }
+
+@router.post("/me/subscribe")
+def subscribe(current_user: models.Utilisateur = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    # démarre/relance 30 jours dès maintenant
+    current_user.is_abonne = True
+    current_user.premium_since = datetime.now(timezone.utc)
+    db.add(current_user); db.commit(); db.refresh(current_user)
+    active, exp = _subscription_info(current_user)
+    return {"ok": True, "is_active": active, "is_abonne": True, "premium_since": current_user.premium_since, "expires_at": exp}
+
+@router.post("/me/unsubscribe")
+def unsubscribe(current_user: models.Utilisateur = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    current_user.is_abonne = False
+    current_user.premium_since = None
+    db.add(current_user); db.commit(); db.refresh(current_user)
+    return {"ok": True, "is_active": False, "is_abonne": False, "premium_since": None, "expires_at": None}
 
 
 
