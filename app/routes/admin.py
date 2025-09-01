@@ -3,14 +3,28 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, desc, and_, or_
+from sqlalchemy import func, case, desc, and_, or_, text
+from io import BytesIO, StringIO
+import zipfile, csv
 
 from app.database import SessionLocal
 from app import models, schemas
 from app.auth import get_current_user  # on s'appuie dessus
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+EXPORT_TABLES = [
+    "utilisateurs",
+    "evenements",
+    "occurrences",
+    "participations",
+    "event_ratings",
+    "user_keyword_prefs",
+    "user_context",
+    "weather_snapshots",
+]
 
 def get_db():
     db = SessionLocal()
@@ -348,3 +362,43 @@ def delete_event(
     db.delete(ev)  # Occurrences/ratings/participations ont ondelete('CASCADE') ou cascade ORM
     db.commit()
     return {"ok": True}
+
+
+@router.get("/export.zip")
+def export_zip(
+    tables: str | None = Query(None, description="Liste de tables séparées par des virgules"),
+    db: Session = Depends(get_db),
+    me: models.Utilisateur = Depends(get_current_user),
+):
+    # admin only
+    if getattr(me, "role", "user") != "admin":
+        raise HTTPException(403, "Accès réservé à l’admin")
+
+    wanted = [t.strip() for t in (tables.split(",") if tables else EXPORT_TABLES) if t.strip()]
+    buf = BytesIO()
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        conn = db.connection()
+        for tab in wanted:
+            try:
+                res = conn.execute(text(f'SELECT * FROM "{tab}"'))  # guillemets → noms en snake_case OK
+            except Exception:
+                # si table inconnue, on l’ignore silencieusement
+                continue
+
+            cols = list(res.keys())
+            rows = res.fetchall()
+
+            sio = StringIO()
+            w = csv.writer(sio)
+            w.writerow(cols)
+            for r in rows:
+                # r est un Row ; list(r) respecte l’ordre des colonnes
+                w.writerow(list(r))
+            zf.writestr(f"{tab}.csv", sio.getvalue())
+
+    buf.seek(0)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"cultureradar_export_{ts}Z.zip"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(buf, media_type="application/zip", headers=headers)
