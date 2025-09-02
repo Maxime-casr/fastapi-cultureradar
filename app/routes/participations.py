@@ -12,6 +12,11 @@ from app import models, schemas
 
 router = APIRouter(prefix="/me/participations", tags=["Participations"])
 
+def _as_naive_utc(dt):
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
 def get_db():
     db = SessionLocal()
     try:
@@ -61,9 +66,12 @@ def _increment_first_time_keywords(db: Session, user_id: int, event: models.Even
             db.add(pref)
 
 def _is_premium_active(u: models.Utilisateur) -> bool:
-    if not getattr(u, "is_abonne", False) or getattr(u, "premium_since", None) is None:
+    if not getattr(u, "is_abonne", False):
         return False
-    return datetime.now(timezone.utc) < (u.premium_since + timedelta(days=30))
+    since = _as_naive_utc(getattr(u, "premium_since", None))
+    if not since:
+        return False
+    return datetime.utcnow() < (since + timedelta(days=30))
 
 @router.get("", response_model=List[schemas.ParticipationOut])
 def list_mine(

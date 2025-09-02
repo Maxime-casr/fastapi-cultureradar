@@ -1,6 +1,6 @@
 # app/routes/utilisateurs.py
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -16,6 +16,12 @@ from app import models, schemas
 APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://localhost:4200")
 
 router = APIRouter(prefix="/utilisateurs", tags=["Utilisateurs"])
+
+def _as_naive_utc(dt):
+    if dt is None:
+        return None
+    # si aware -> convertir UTC puis enlever tzinfo
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
 
 def get_db():
     db = SessionLocal()
@@ -115,7 +121,7 @@ def _subscription_info(u: models.Utilisateur) -> tuple[bool, datetime|None]:
 @router.get("/me/subscription")
 def get_subscription_status(current_user: models.Utilisateur = Depends(get_current_user)):
     now = datetime.utcnow()
-    since = getattr(current_user, "premium_since", None)  # naïf depuis PG
+    since = _as_naive_utc(getattr(current_user, "premium_since", None))
     is_abonne = bool(getattr(current_user, "is_abonne", False))
     is_active = bool(is_abonne and since and (since + timedelta(days=30) >= now))
     return {"is_abonne": is_abonne, "premium_since": since, "is_active": is_active}
@@ -127,12 +133,14 @@ def subscribe(current_user: models.Utilisateur = Depends(get_current_user),
     if not user:
         raise HTTPException(404, "Utilisateur introuvable")
 
-    now = datetime.utcnow()                         # ⬅️ naïf
-    if user.is_abonne and user.premium_since and (user.premium_since + timedelta(days=30) >= now):
+    now_aw = datetime.now(timezone.utc)          # stocke en aware (sûr si colonne timezone=True)
+    # abonnement déjà actif ?
+    since_nv = _as_naive_utc(user.premium_since)
+    if user.is_abonne and since_nv and (since_nv + timedelta(days=30) >= datetime.utcnow()):
         return {"ok": True, "is_abonne": True, "premium_since": user.premium_since, "is_active": True}
 
     user.is_abonne = True
-    user.premium_since = now
+    user.premium_since = now_aw
     db.commit(); db.refresh(user)
     return {"ok": True, "is_abonne": True, "premium_since": user.premium_since, "is_active": True}
 
