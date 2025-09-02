@@ -2,7 +2,7 @@
 from typing import List, Optional
 from datetime import datetime, date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import asc, desc, or_, and_, func, case, literal, cast, Float
 import math
@@ -445,7 +445,7 @@ def get_event_rating_average(event_id: int, db: Session = Depends(get_db)):
     return schemas.RatingAverage(average=round(avg, 3) if avg is not None else None, count=count)
 
 
-@router.get("/{event_id}/ratings/me", response_model=schemas.RatingMyOut)
+@router.get("/{event_id}/ratings/me", responses={204: {"description": "No rating yet"}})
 def get_my_event_rating(
     event_id: int,
     db: Session = Depends(get_db),
@@ -458,8 +458,8 @@ def get_my_event_rating(
           .first()
     )
     if not r:
-        raise HTTPException(404, "Pas de note pour cet utilisateur")
-    return schemas.RatingMyOut(rating=r.rating, commentaire=r.commentaire)  # <-- ajouté
+        return Response(status_code=204)   # 👈 pas d’erreur, juste “pas de contenu”
+    return {"rating": r.rating, "commentaire": r.commentaire}
 
 
 
