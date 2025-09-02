@@ -118,13 +118,20 @@ def get_subscription_status(
 ):
     now = datetime.now(timezone.utc)
     since = getattr(current_user, "premium_since", None)
+
+    if since and since.tzinfo is None:  
+        
+        since = since.replace(tzinfo=timezone.utc)
+
     is_abonne = bool(getattr(current_user, "is_abonne", False))
     is_active = bool(is_abonne and since and (since + timedelta(days=30) >= now))
+
     return {
         "is_abonne": is_abonne,
         "premium_since": since,
         "is_active": is_active,
     }
+
 
 @router.post("/me/subscribe")
 def subscribe(
