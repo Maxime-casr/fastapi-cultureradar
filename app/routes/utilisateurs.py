@@ -1,6 +1,6 @@
 # app/routes/utilisateurs.py
 from __future__ import annotations
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -113,62 +113,38 @@ def _subscription_info(u: models.Utilisateur) -> tuple[bool, datetime|None]:
     return (datetime.now(timezone.utc) < expires), expires
 
 @router.get("/me/subscription")
-def get_subscription_status(
-    current_user: models.Utilisateur = Depends(get_current_user),
-):
-    now = datetime.now(timezone.utc)
-    since = getattr(current_user, "premium_since", None)
-
-    if since and since.tzinfo is None:  
-        
-        since = since.replace(tzinfo=timezone.utc)
-
+def get_subscription_status(current_user: models.Utilisateur = Depends(get_current_user)):
+    now = datetime.utcnow()
+    since = getattr(current_user, "premium_since", None)  # naïf depuis PG
     is_abonne = bool(getattr(current_user, "is_abonne", False))
     is_active = bool(is_abonne and since and (since + timedelta(days=30) >= now))
-
-    return {
-        "is_abonne": is_abonne,
-        "premium_since": since,
-        "is_active": is_active,
-    }
-
+    return {"is_abonne": is_abonne, "premium_since": since, "is_active": is_active}
 
 @router.post("/me/subscribe")
-def subscribe(
-    current_user: models.Utilisateur = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    # ⚠️ recharger l'objet dans CETTE session
+def subscribe(current_user: models.Utilisateur = Depends(get_current_user),
+              db: Session = Depends(get_db)):
     user = db.query(models.Utilisateur).get(current_user.id)
     if not user:
         raise HTTPException(404, "Utilisateur introuvable")
 
-    now = datetime.now(timezone.utc)
-    # déjà actif ?
+    now = datetime.utcnow()                         # ⬅️ naïf
     if user.is_abonne and user.premium_since and (user.premium_since + timedelta(days=30) >= now):
         return {"ok": True, "is_abonne": True, "premium_since": user.premium_since, "is_active": True}
 
     user.is_abonne = True
     user.premium_since = now
-    db.commit()
-    db.refresh(user)
-
+    db.commit(); db.refresh(user)
     return {"ok": True, "is_abonne": True, "premium_since": user.premium_since, "is_active": True}
 
 @router.post("/me/unsubscribe")
-def unsubscribe(
-    current_user: models.Utilisateur = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def unsubscribe(current_user: models.Utilisateur = Depends(get_current_user),
+                db: Session = Depends(get_db)):
     user = db.query(models.Utilisateur).get(current_user.id)
     if not user:
         raise HTTPException(404, "Utilisateur introuvable")
-
     user.is_abonne = False
     user.premium_since = None
-    db.commit()
-    db.refresh(user)
-
+    db.commit(); db.refresh(user)
     return {"ok": True, "is_abonne": False, "premium_since": None, "is_active": False}
 
 
